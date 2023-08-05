@@ -2,6 +2,9 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import itertools
+from torchvision import transforms
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
 
 
 def print_samples(loader, class_map,count=16):
@@ -88,7 +91,8 @@ def plot_confusion_matrix(cm, classes, normalize=False, title='Confusion matrix'
     plt.xlabel('Predicted label')
 
 
-def plot_incorrect_predictions(predictions, class_map, count=10):
+
+def plot_predictions_gradcam(model,predictions, class_map,target_layers,use_cuda,count=10):
     """Plot Incorrect predictions
 
     Args:
@@ -96,7 +100,56 @@ def plot_incorrect_predictions(predictions, class_map, count=10):
         class_map (dict): Lable mapping
         count (int, optional): Number of samples to print, multiple of 5. Defaults to 10.
     """
-    print(f'Total Incorrect Predictions {len(predictions)}')
+    cam = GradCAM(model=model, target_layers=target_layers, use_cuda=use_cuda)
+    # Denormalize the data using test mean and std deviation
+    inv_normalize = transforms.Normalize(
+        mean=[-0.50/0.23, -0.50/0.23, -0.50/0.23],
+        std=[1/0.23, 1/0.23, 1/0.23]
+    )
+
+    if not count % 5 == 0:
+        print("Count should be multiple of 10")
+        return
+
+    classes = list(class_map.values())
+
+    fig = plt.figure(figsize=(10, 5))
+    for i, (d, t, p, o) in enumerate(predictions):
+        orig_img = d.cpu().numpy()
+        orig_img = np.transpose(orig_img, (1, 2, 0))
+        input_image = orig_img
+        transform_to_tensor = transforms.ToTensor()
+        input_image = transform_to_tensor(input_image)
+        input_image = input_image.unsqueeze(0)
+        ax = fig.add_subplot(int(count/5), 5, i + 1, xticks=[], yticks=[])
+        ax.set_title(f'{classes[t.item()]}/{classes[p.item()]}')
+        grayscale_cam = cam(input_tensor=input_image)
+        grayscale_cam = grayscale_cam[0, :]       
+        val = inv_normalize(d.cpu()).numpy().transpose(1, 2, 0)
+        visualization = show_cam_on_image(val, grayscale_cam, use_rgb=True,image_weight = 0.5)
+        plt.imshow(visualization)
+        if i+1 == 5*(count/5):
+            break
+
+
+
+def plot_predictions(predictions, class_map, correct = True,count=10):
+    """Plot Incorrect predictions
+
+    Args:
+        predictions (list): List of all incorrect predictions
+        class_map (dict): Lable mapping
+        count (int, optional): Number of samples to print, multiple of 5. Defaults to 10.
+    """
+    if correct:
+      print(f'Total correct Predictions {len(predictions)}')
+    else:
+      print(f'Total incorrect Predictions {len(predictions)}')
+    # Denormalize the data using test mean and std deviation
+    inv_normalize = transforms.Normalize(
+        mean=[-0.50/0.23, -0.50/0.23, -0.50/0.23],
+        std=[1/0.23, 1/0.23, 1/0.23]
+    )
 
     if not count % 5 == 0:
         print("Count should be multiple of 10")
@@ -108,10 +161,9 @@ def plot_incorrect_predictions(predictions, class_map, count=10):
     for i, (d, t, p, o) in enumerate(predictions):
         ax = fig.add_subplot(int(count/5), 5, i + 1, xticks=[], yticks=[])
         ax.set_title(f'{classes[t.item()]}/{classes[p.item()]}')
-        plt.imshow(d.cpu().numpy().transpose(1, 2, 0))
+        plt.imshow(inv_normalize(d.cpu()).numpy().transpose(1, 2, 0))
         if i+1 == 5*(count/5):
             break
-
 
 def plot_network_performance(epochs, schedule, train_loss, valid_loss, train_correct, valid_correct):
     plt.figure(figsize=(15, 5))
@@ -176,3 +228,4 @@ def plot_model_comparison(trainers, epochs):
 
     plt.tight_layout()
     plt.show()
+
