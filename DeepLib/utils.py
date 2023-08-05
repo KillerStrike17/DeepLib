@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from torchsummary import summary
+import matplotlib.pyplot as plt
+from torchvision import transforms
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
 
 torch.manual_seed(1)
 
@@ -108,33 +112,6 @@ def get_all_predictions(model, loader, device):
     return all_preds, all_targets
 
 
-def get_incorrrect_predictions(model, loader, device):
-    """Get all incorrect predictions
-
-    Args:
-        model (Net): Trained model
-        loader (DataLoader): instance of data loader
-        device (str): Which device to use cuda/cpu
-
-    Returns:
-        list: list of all incorrect predictions and their corresponding details
-    """
-    model.eval()
-    incorrect = []
-    with torch.no_grad():
-        for data, target in loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            loss = F.nll_loss(output, target)
-            pred = output.argmax(dim=1)
-            for d, t, p, o in zip(data, target, pred, output):
-                if p.eq(t.view_as(p)).item() == False:
-                    incorrect.append(
-                        [d.cpu(), t.cpu(), p.cpu(), o[p.item()].cpu()])
-
-    return incorrect
-
-
 def prepare_confusion_matrix(all_preds, all_targets, class_map):
     """Prepare Confusion matrix
 
@@ -163,3 +140,102 @@ def prepare_confusion_matrix(all_preds, all_targets, class_map):
         confusion_matrix[tl, pl] = confusion_matrix[tl, pl] + 1
 
     return confusion_matrix
+
+def plot_predictions_gradcam(model,predictions, class_map,target_layers,use_cuda,count=10):
+    """Plot Incorrect predictions
+
+    Args:
+        predictions (list): List of all incorrect predictions
+        class_map (dict): Lable mapping
+        count (int, optional): Number of samples to print, multiple of 5. Defaults to 10.
+    """
+    cam = GradCAM(model=model, target_layers=target_layers, use_cuda=use_cuda)
+    # Denormalize the data using test mean and std deviation
+    inv_normalize = transforms.Normalize(
+        mean=[-0.50/0.23, -0.50/0.23, -0.50/0.23],
+        std=[1/0.23, 1/0.23, 1/0.23]
+    )
+
+    if not count % 5 == 0:
+        print("Count should be multiple of 10")
+        return
+
+    classes = list(class_map.values())
+
+    fig = plt.figure(figsize=(10, 5))
+    for i, (d, t, p, o) in enumerate(predictions):
+        orig_img = d.cpu().numpy()
+        orig_img = np.transpose(orig_img, (1, 2, 0))
+        input_image = orig_img
+        transform_to_tensor = transforms.ToTensor()
+        input_image = transform_to_tensor(input_image)
+        input_image = input_image.unsqueeze(0)
+        ax = fig.add_subplot(int(count/5), 5, i + 1, xticks=[], yticks=[])
+        ax.set_title(f'{classes[t.item()]}/{classes[p.item()]}')
+        grayscale_cam = cam(input_tensor=input_image)
+        grayscale_cam = grayscale_cam[0, :]       
+        val = inv_normalize(d.cpu()).numpy().transpose(1, 2, 0)
+        visualization = show_cam_on_image(val, grayscale_cam, use_rgb=True,image_weight = 0.5)
+        plt.imshow(visualization)
+        if i+1 == 5*(count/5):
+            break
+
+
+
+def plot_predictions(predictions, class_map, correct = True,count=10):
+    """Plot Incorrect predictions
+
+    Args:
+        predictions (list): List of all incorrect predictions
+        class_map (dict): Lable mapping
+        count (int, optional): Number of samples to print, multiple of 5. Defaults to 10.
+    """
+    if correct:
+      print(f'Total correct Predictions {len(predictions)}')
+    else:
+      print(f'Total incorrect Predictions {len(predictions)}')
+    # Denormalize the data using test mean and std deviation
+    inv_normalize = transforms.Normalize(
+        mean=[-0.50/0.23, -0.50/0.23, -0.50/0.23],
+        std=[1/0.23, 1/0.23, 1/0.23]
+    )
+
+    if not count % 5 == 0:
+        print("Count should be multiple of 10")
+        return
+
+    classes = list(class_map.values())
+
+    fig = plt.figure(figsize=(10, 5))
+    for i, (d, t, p, o) in enumerate(predictions):
+        ax = fig.add_subplot(int(count/5), 5, i + 1, xticks=[], yticks=[])
+        ax.set_title(f'{classes[t.item()]}/{classes[p.item()]}')
+        plt.imshow(inv_normalize(d.cpu()).numpy().transpose(1, 2, 0))
+        if i+1 == 5*(count/5):
+            break
+        
+def get_predictions(model, loader, device,correct = True):
+    """Get all predictions
+
+    Args:
+        model (Net): Trained model
+        loader (DataLoader): instance of data loader
+        device (str): Which device to use cuda/cpu
+
+    Returns:
+        list: list of all incorrect predictions and their corresponding details
+    """
+    model.eval()
+    vals = []
+    with torch.no_grad():
+        for data, target in loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            loss = F.nll_loss(output, target)
+            pred = output.argmax(dim=1)
+            for d, t, p, o in zip(data, target, pred, output):
+                if p.eq(t.view_as(p)).item() == correct:
+                    vals.append(
+                        [d.cpu(), t.cpu(), p.cpu(), o[p.item()].cpu()])
+
+    return vals
